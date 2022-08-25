@@ -2508,17 +2508,40 @@ stacktest(char *s)
     exit(xstatus);
 }
 
+// check that writes to text segment fault
+void
+textwrite(char *s)
+{
+  int pid;
+  int xstatus;
+  
+  pid = fork();
+  if(pid == 0) {
+    volatile int *addr = (int *) 0;
+    *addr = 10;
+    exit(1);
+  } else if(pid < 0){
+    printf("%s: fork failed\n", s);
+    exit(1);
+  }
+  wait(&xstatus);
+  if(xstatus == -1)  // kernel killed child?
+    exit(0);
+  else
+    exit(xstatus);
+}
+
 // regression test. copyin(), copyout(), and copyinstr() used to cast
 // the virtual page address to uint, which (with certain wild system
 // call arguments) resulted in a kernel page faults.
+void *big = (void*) 0xeaeb0b5b00002f5e;
 void
 pgbug(char *s)
 {
   char *argv[1];
   argv[0] = 0;
-  exec((char*)0xeaeb0b5b00002f5e, argv);
-
-  pipe((int*)0xeaeb0b5b00002f5e);
+  exec(big, argv);
+  pipe(big);
 
   exit(0);
 }
@@ -2607,6 +2630,7 @@ sbrklast(char *s)
     exit(1);
 }
 
+
 // does sbrk handle signed int32 wrap-around with
 // negative arguments?
 void
@@ -2616,6 +2640,7 @@ sbrk8000(char *s)
   volatile char *top = sbrk(0);
   *(top-1) = *(top-1) + 1;
 }
+
 
 // regression test. does write() with an invalid buffer pointer cause
 // a block to be allocated for a file that is then not freed when the
@@ -2712,6 +2737,8 @@ diskfull(char *s)
 {
   int fi;
   int done = 0;
+
+  unlink("diskfulldir");
   
   for(fi = 0; done == 0; fi++){
     char name[32];
@@ -2723,6 +2750,7 @@ diskfull(char *s)
     unlink(name);
     int fd = open(name, O_CREATE|O_RDWR|O_TRUNC);
     if(fd < 0){
+      // oops, ran out of inodes before running out of blocks.
       printf("%s: could not create file %s\n", s, name);
       done = 1;
       break;
@@ -2738,12 +2766,78 @@ diskfull(char *s)
     close(fd);
   }
 
+  // now that there are no free blocks, test that dirlink()
+  // merely fails (doesn't panic) if it can't extend
+  // directory content. one of these file creations
+  // is expected to fail.
+  int nzz = 128;
+  for(int i = 0; i < nzz; i++){
+    char name[32];
+    name[0] = 'z';
+    name[1] = 'z';
+    name[2] = '0' + (i / 32);
+    name[3] = '0' + (i % 32);
+    name[4] = '\0';
+    unlink(name);
+    int fd = open(name, O_CREATE|O_RDWR|O_TRUNC);
+    if(fd < 0)
+      break;
+    close(fd);
+  }
+
+  // this mkdir() is expected to fail.
+  if(mkdir("diskfulldir") == 0)
+    printf("%s: mkdir(diskfulldir) unexpectedly succeeded!\n");
+
+  unlink("diskfulldir");
+
+  for(int i = 0; i < nzz; i++){
+    char name[32];
+    name[0] = 'z';
+    name[1] = 'z';
+    name[2] = '0' + (i / 32);
+    name[3] = '0' + (i % 32);
+    name[4] = '\0';
+    unlink(name);
+  }
+
   for(int i = 0; i < fi; i++){
     char name[32];
     name[0] = 'b';
     name[1] = 'i';
     name[2] = 'g';
     name[3] = '0' + i;
+    name[4] = '\0';
+    unlink(name);
+  }
+}
+
+void
+outofinodes(char *s)
+{
+  int nzz = 32*32;
+  for(int i = 0; i < nzz; i++){
+    char name[32];
+    name[0] = 'z';
+    name[1] = 'z';
+    name[2] = '0' + (i / 32);
+    name[3] = '0' + (i % 32);
+    name[4] = '\0';
+    unlink(name);
+    int fd = open(name, O_CREATE|O_RDWR|O_TRUNC);
+    if(fd < 0){
+      // failure is eventually expected.
+      break;
+    }
+    close(fd);
+  }
+
+  for(int i = 0; i < nzz; i++){
+    char name[32];
+    name[0] = 'z';
+    name[1] = 'z';
+    name[2] = '0' + (i / 32);
+    name[3] = '0' + (i % 32);
     name[4] = '\0';
     unlink(name);
   }
@@ -2861,9 +2955,6 @@ main(int argc, char *argv[])
     void (*f)(char *);
     char *s;
   } tests[] = {
-    {diskfull, "diskfull"},
-    {manywrites, "manywrites"},
-    {execout, "execout"},
     {copyin, "copyin"},
     {copyout, "copyout"},
     {copyinstr1, "copyinstr1"},
@@ -2873,58 +2964,64 @@ main(int argc, char *argv[])
     {truncate1, "truncate1"},
     {truncate2, "truncate2"},
     {truncate3, "truncate3"},
-    {reparent2, "reparent2"},
-    {pgbug, "pgbug" },
-    {sbrkbugs, "sbrkbugs" },
-    // {badwrite, "badwrite" },
-    {badarg, "badarg" },
-    {reparent, "reparent" },
-    {twochildren, "twochildren"},
-    {forkfork, "forkfork"},
-    {forkforkfork, "forkforkfork"},
-    {argptest, "argptest"},
-    {createdelete, "createdelete"},
-    {linkunlink, "linkunlink"},
-    {linktest, "linktest"},
-    {unlinkread, "unlinkread"},
-    {concreate, "concreate"},
-    {subdir, "subdir"},
-    {fourfiles, "fourfiles"},
-    {sharedfd, "sharedfd"},
-    {dirtest, "dirtest"},
-    {exectest, "exectest"},
-    {bigargtest, "bigargtest"},
-    {bigwrite, "bigwrite"},
-    {bsstest, "bsstest"},
-    {sbrkbasic, "sbrkbasic"},
-    {sbrkmuch, "sbrkmuch"},
-    {kernmem, "kernmem"},
-    {sbrkfail, "sbrkfail"},
-    {sbrkarg, "sbrkarg"},
-    {sbrklast, "sbrklast"},
-    {sbrk8000, "sbrk8000"},
-    {validatetest, "validatetest"},
-    {stacktest, "stacktest"},
+    {openiputtest, "openiput"},
+    {exitiputtest, "exitiput"},
+    {iputtest, "iput"},
     {opentest, "opentest"},
     {writetest, "writetest"},
     {writebig, "writebig"},
     {createtest, "createtest"},
-    {openiputtest, "openiput"},
-    {exitiputtest, "exitiput"},
-    {iputtest, "iput"},
-    {mem, "mem"},
+    {dirtest, "dirtest"},
+    {exectest, "exectest"},
     {pipe1, "pipe1"},
     {killstatus, "killstatus"},
     {preempt, "preempt"},
     {exitwait, "exitwait"},
-    {rmdot, "rmdot"},
-    {fourteen, "fourteen"},
+    {reparent, "reparent" },
+    {twochildren, "twochildren"},
+    {forkfork, "forkfork"},
+    {forkforkfork, "forkforkfork"},
+    {reparent2, "reparent2"},
+    {mem, "mem"},
+    {sharedfd, "sharedfd"},
+    {fourfiles, "fourfiles"},
+    {createdelete, "createdelete"},
+    {unlinkread, "unlinkread"},
+    {linktest, "linktest"},
+    {concreate, "concreate"},
+    {linkunlink, "linkunlink"},
+    {bigdir, "bigdir"}, // slow
+    {subdir, "subdir"},
+    {bigwrite, "bigwrite"},
+    {manywrites, "manywrites"},
     {bigfile, "bigfile"},
+    {fourteen, "fourteen"},
+    {rmdot, "rmdot"},
     {dirfile, "dirfile"},
     {iref, "iref"},
     {forktest, "forktest"},
+    {sbrkbasic, "sbrkbasic"},
+    {sbrkmuch, "sbrkmuch"},
+    {kernmem, "kernmem"},
     {MAXVAplus, "MAXVAplus"},
-    {bigdir, "bigdir"}, // slow
+    {sbrkfail, "sbrkfail"},
+    {sbrkarg, "sbrkarg"},
+    {validatetest, "validatetest"},
+    {bsstest, "bsstest"},
+    {bigargtest, "bigargtest"},
+    {argptest, "argptest"},
+    {stacktest, "stacktest"},
+    {textwrite, "textwrite"},
+    {pgbug, "pgbug" },
+    {sbrkbugs, "sbrkbugs" },
+    {sbrklast, "sbrklast"},
+    {sbrk8000, "sbrk8000"},
+    {badwrite, "badwrite" },
+    {badarg, "badarg" },
+    {execout, "execout"},
+    {diskfull, "diskfull"},
+    {outofinodes, "outofinodes"},
+
     { 0, 0},
   };
 

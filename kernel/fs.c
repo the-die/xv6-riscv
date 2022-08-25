@@ -193,7 +193,8 @@ static struct inode* iget(uint dev, uint inum);
 
 // Allocate an inode on device dev.
 // Mark it as allocated by  giving it type type.
-// Returns an unlocked but allocated and referenced inode.
+// Returns an unlocked but allocated and referenced inode,
+// or NULL if there is no free inode.
 struct inode*
 ialloc(uint dev, short type)
 {
@@ -213,7 +214,8 @@ ialloc(uint dev, short type)
     }
     brelse(bp);
   }
-  panic("ialloc: no inodes");
+  printf("ialloc: no inodes\n");
+  return 0;
 }
 
 // Copy a modified in-memory inode to disk.
@@ -573,6 +575,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
 }
 
 // Write a new directory entry (name, inum) into the directory dp.
+// Returns 0 on success, -1 on failure (e.g. out of disk blocks).
 int
 dirlink(struct inode *dp, char *name, uint inum)
 {
@@ -597,7 +600,7 @@ dirlink(struct inode *dp, char *name, uint inum)
   strncpy(de.name, name, DIRSIZ);
   de.inum = inum;
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
-    panic("dirlink");
+    return -1;
 
   return 0;
 }
